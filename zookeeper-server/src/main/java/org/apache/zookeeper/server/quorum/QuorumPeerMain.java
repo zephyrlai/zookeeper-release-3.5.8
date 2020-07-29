@@ -144,7 +144,9 @@ public class QuorumPeerMain {
           ServerCnxnFactory secureCnxnFactory = null;
 
           if (config.getClientPortAddress() != null) {
+              // todo 创建ServerCnxnFactory
               cnxnFactory = ServerCnxnFactory.createFactory();
+              // todo 初始化ServerCnxnFactory，配置客户端连接端口
               cnxnFactory.configure(config.getClientPortAddress(),
                       config.getMaxClientCnxns(),
                       false);
@@ -152,12 +154,15 @@ public class QuorumPeerMain {
 
           if (config.getSecureClientPortAddress() != null) {
               secureCnxnFactory = ServerCnxnFactory.createFactory();
+              // todo 配置安全连接端口
               secureCnxnFactory.configure(config.getSecureClientPortAddress(),
                       config.getMaxClientCnxns(),
                       true);
           }
-
+          // todo 初始化当前zk服务器节点配置
+          //  设置数据和快照操作， 数据管理器
           quorumPeer = getQuorumPeer();
+          // todo 创建并设置FileTxnSnapLog
           quorumPeer.setTxnFactory(new FileTxnSnapLog(
                       config.getDataLogDir(),
                       config.getDataDir()));
@@ -173,11 +178,13 @@ public class QuorumPeerMain {
           quorumPeer.setInitLimit(config.getInitLimit());
           quorumPeer.setSyncLimit(config.getSyncLimit());
           quorumPeer.setConfigFileName(config.getConfigFilename());
+          // todo 设置zkDataBase
           quorumPeer.setZKDatabase(new ZKDatabase(quorumPeer.getTxnFactory()));
           quorumPeer.setQuorumVerifier(config.getQuorumVerifier(), false);
           if (config.getLastSeenQuorumVerifier()!=null) {
               quorumPeer.setLastSeenQuorumVerifier(config.getLastSeenQuorumVerifier(), false);
           }
+          // todo 初始化zkDataBase
           quorumPeer.initConfigInZKDatabase();
           quorumPeer.setCnxnFactory(cnxnFactory);
           quorumPeer.setSecureCnxnFactory(secureCnxnFactory);
@@ -200,8 +207,9 @@ public class QuorumPeerMain {
               quorumPeer.setQuorumLearnerLoginContext(config.quorumLearnerLoginContext);
           }
           quorumPeer.setQuorumCnxnThreadsSize(config.quorumCnxnThreadsSize);
+          // todo 初始化zk服务器节点
           quorumPeer.initialize();
-          
+          // todo 启动zk服务器节点 →
           quorumPeer.start();
           quorumPeer.join();
       } catch (InterruptedException e) {
