@@ -86,7 +86,8 @@ public class FastLeaderElection implements Election {
      * joined leader election or because it learned of another
      * peer with higher zxid or same zxid and higher server id
      */
-
+    // todo Notification表示收到的投票信息（即由其他服务端发送过来的信息），
+    //  其中包括了被选举者id、zxid（事务id）、term（选举周期）等
     static public class Notification {
         /*
          * Format version, introduced in 3.4.6
@@ -134,6 +135,7 @@ public class FastLeaderElection implements Election {
      * These messages can be both Notifications and Acks
      * of reception of notification.
      */
+    // todo ToSend表示发送给其他服务端的投票信息，其中包括被选举者id、zxid（事务id）、term（选举周期）等
     static public class ToSend {
         static enum mType {crequest, challenge, notification, ack}
 
@@ -676,6 +678,7 @@ public class FastLeaderElection implements Election {
     private void sendNotifications() {
         for (long sid : self.getCurrentAndNextConfigVoters()) {
             QuorumVerifier qv = self.getQuorumVerifier();
+            // todo 将选票信息封装成ToSend对象
             ToSend notmsg = new ToSend(ToSend.mType.notification,
                     proposedLeader,
                     proposedZxid,
@@ -689,6 +692,7 @@ public class FastLeaderElection implements Election {
                       " (n.round), " + sid + " (recipient), " + self.getId() +
                       " (myid), 0x" + Long.toHexString(proposedEpoch) + " (n.peerEpoch)");
             }
+            // todo 将ToSend对象放置在队列中，由workerSender发送
             sendqueue.offer(notmsg);
         }
     }
@@ -755,12 +759,13 @@ public class FastLeaderElection implements Election {
          * First make the views consistent. Sometimes peers will have different
          * zxids for a server depending on timing.
          */
+        // todo 遍历收到的选票，将与当前选票信息一致的选票放入voteSet
         for (Map.Entry<Long, Vote> entry : votes.entrySet()) {
             if (vote.equals(entry.getValue())) {
                 voteSet.addAck(entry.getKey());
             }
         }
-
+        // todo 统计set，查看voteSet中的选票是否过半
         return voteSet.hasAllQuorums();
     }
 
@@ -896,24 +901,28 @@ public class FastLeaderElection implements Election {
             int notTimeout = finalizeWait;
 
             synchronized(this){
+                // todo 1. 逻辑时钟+1（每开始一轮选举都要+1）
                 logicalclock.incrementAndGet();
+                // todo 2. 初始化选票
                 updateProposal(getInitId(), getInitLastLoggedZxid(), getPeerEpoch());
             }
 
             LOG.info("New election. My id =  " + self.getId() +
                     ", proposed zxid=0x" + Long.toHexString(proposedZxid));
+            // todo 3. 发送初始化选票 →
             sendNotifications();
 
             /*
              * Loop in which we exchange notifications until we find a leader
              */
-
+            // todo 在循环中（LOOKING状态下）交换通知，直到找到新leader
             while ((self.getPeerState() == ServerState.LOOKING) &&
                     (!stop)){
                 /*
                  * Remove next notification from queue, times out after 2 times
                  * the termination time
                  */
+                // todo 4. 接收外部投票，服务端会不断地从recvqueue中接收并读取投票信息，并封装为Notification对象
                 Notification n = recvqueue.poll(notTimeout,
                         TimeUnit.MILLISECONDS);
 
@@ -921,16 +930,21 @@ public class FastLeaderElection implements Election {
                  * Sends more notifications if haven't received enough.
                  * Otherwise processes new notification.
                  */
+                // todo 未接收到投票
                 if(n == null){
+                    // todo 判断是否与集群断开连接
                     if(manager.haveDelivered()){
+                        // todo 没有与集群断开连接，则发送自己的投票信息
                         sendNotifications();
                     } else {
+                        // todo 确实与集群断开连接，则立即重连
                         manager.connectAll();
                     }
 
                     /*
                      * Exponential backoff
                      */
+                    // todo 5. 处理外部投票（判断选举轮次是否在当前轮次中）
                     int tmpTimeOut = notTimeout*2;
                     notTimeout = (tmpTimeOut < maxNotificationInterval?
                             tmpTimeOut : maxNotificationInterval);
@@ -941,12 +955,20 @@ public class FastLeaderElection implements Election {
                      * Only proceed if the vote comes from a replica in the current or next
                      * voting view for a replica in the current or next voting view.
                      */
+                    // todo 不同的状态下执行不同的操作
                     switch (n.state) {
                     case LOOKING:
                         // If notification > current, replace and send messages out
+                        // todo 外部投票轮次大于内部投票轮次
                         if (n.electionEpoch > logicalclock.get()) {
+                            // todo 更新选举轮次
                             logicalclock.set(n.electionEpoch);
+                            // todo 清空所有已经收到的选票
                             recvset.clear();
+                            // todo totalOrderPredicate这个方法在如下情况下会返回true：
+                            //  n对应的选举轮次更高；
+                            //  选举轮次相同的情况下，n对应的zxid更高；
+                            //  选举轮次、zxid相同的情况下，n对应的serverId（即myid）更高
                             if(totalOrderPredicate(n.leader, n.zxid, n.peerEpoch,
                                     getInitId(), getInitLastLoggedZxid(), getPeerEpoch())) {
                                 updateProposal(n.leader, n.zxid, n.peerEpoch);
@@ -955,7 +977,9 @@ public class FastLeaderElection implements Election {
                                         getInitLastLoggedZxid(),
                                         getPeerEpoch());
                             }
+                            // todo 重新发送自己的选票
                             sendNotifications();
+                        // todo 外部投票轮次小于内部投票轮次，直接忽略，break跳出
                         } else if (n.electionEpoch < logicalclock.get()) {
                             if(LOG.isDebugEnabled()){
                                 LOG.debug("Notification election epoch is smaller than logicalclock. n.electionEpoch = 0x"
@@ -963,9 +987,13 @@ public class FastLeaderElection implements Election {
                                         + ", logicalclock=0x" + Long.toHexString(logicalclock.get()));
                             }
                             break;
+                        // todo 外部投票轮次等于内部投票轮次
+                        //  6. 选票PK，依旧是totalOrderPredicate方法，如果n对应的选票epcho或者zxid或者myid更高，则使用n对应的选票信息
                         } else if (totalOrderPredicate(n.leader, n.zxid, n.peerEpoch,
                                 proposedLeader, proposedZxid, proposedEpoch)) {
+                            // todo 更新选票信息
                             updateProposal(n.leader, n.zxid, n.peerEpoch);
+                            // todo 重新返送选票
                             sendNotifications();
                         }
 
@@ -977,8 +1005,10 @@ public class FastLeaderElection implements Election {
                         }
 
                         // don't care about the version if it's in LOOKING state
+                        // todo 7. 选票归档，将所有的外部选票都放入recvset 中
                         recvset.put(n.sid, new Vote(n.leader, n.zxid, n.electionEpoch, n.peerEpoch));
-
+                        // todo 8. 统计选票：判断当前节点收到的票数是否可以结束选举
+                        //  →
                         if (termPredicate(recvset,
                                 new Vote(proposedLeader, proposedZxid,
                                         logicalclock.get(), proposedEpoch))) {
@@ -988,6 +1018,7 @@ public class FastLeaderElection implements Election {
                                     TimeUnit.MILLISECONDS)) != null){
                                 if(totalOrderPredicate(n.leader, n.zxid, n.peerEpoch,
                                         proposedLeader, proposedZxid, proposedEpoch)){
+                                    // todo 将最新的选票放入recvqueue中
                                     recvqueue.put(n);
                                     break;
                                 }
@@ -998,11 +1029,14 @@ public class FastLeaderElection implements Election {
                              * relevant message from the reception queue
                              */
                             if (n == null) {
+                                // todo 设置服务器状态
                                 self.setPeerState((proposedLeader == self.getId()) ?
                                         ServerState.LEADING: learningState());
+                                // todo 最新的选票
                                 Vote endVote = new Vote(proposedLeader,
                                         proposedZxid, logicalclock.get(), 
                                         proposedEpoch);
+                                // todo 清空recvQueue队列中的选票
                                 leaveInstance(endVote);
                                 return endVote;
                             }
